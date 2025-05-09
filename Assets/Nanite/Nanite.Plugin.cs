@@ -16,6 +16,7 @@ namespace Nanite
 
     }
 
+    [Serializable]
     public class MeshletsContext
     {
         public byte[] triangles;
