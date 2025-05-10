@@ -1,69 +1,81 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
+using System.Text;
 using UnityEngine;
 using UnityEditor;
 
 namespace Nanite
 {
-    [Serializable]
-    public class MeshletRenderData
+    // Serializable asset to store meshlet data
+    [CreateAssetMenu(fileName = "MeshletData", menuName = "Nanite/Meshlet Data")]
+    public class MeshletData : ScriptableObject
     {
-        public Mesh mesh;
-        public Matrix4x4 localTransform;
-        public Color color;
+        [Serializable]
+        public class SerializedMeshlet
+        {
+            public Vector3[] vertices;
+            public int[] triangles;
+            public Vector3[] normals;
+            public Color color;
+        }
+
+        public SerializedMeshlet[] meshlets;
+        public Mesh sourceMesh;
     }
 
-    public class MeshletVisualizer : EditorWindow
+    // Editor window for generating meshlets
+    public class MeshletGenerator : EditorWindow
     {
         private GameObject targetObject;
         private Mesh sourceMesh;
-        private Material meshletMaterial;
+        private Material previewMaterial;
+        private List<MeshletRenderData> previewMeshlets = new List<MeshletRenderData>();
         private MaterialPropertyBlock propertyBlock;
-        private List<MeshletRenderData> meshletData = new List<MeshletRenderData>();
-        private bool showMeshlets = false;
+        private bool showPreview = false;
         private Vector2 scrollPosition;
-        private float meshletScale = 1.0f;
+        private float previewScale = 1.0f;
         private int selectedMeshletIndex = -1;
+        private MeshletData generatedData;
+        private string savePath = "Assets/MeshletData.asset";
 
-        [MenuItem("Window/Meshlet Visualizer")]
+        [MenuItem("Window/Nanite/Meshlet Generator")]
         public static void ShowWindow()
         {
-            GetWindow<MeshletVisualizer>("Meshlet Visualizer");
+            GetWindow<MeshletGenerator>("Meshlet Generator");
         }
 
         private void OnEnable()
         {
             SceneView.duringSceneGui += OnSceneGUI;
-
-            // Create material for rendering meshlets
-            meshletMaterial = new Material(Shader.Find("Standard"));
-            meshletMaterial.enableInstancing = true;
+            
+            // Create material for preview
+            previewMaterial = new Material(Shader.Find("Standard"));
+            previewMaterial.enableInstancing = true;
             propertyBlock = new MaterialPropertyBlock();
         }
 
         private void OnDisable()
         {
             SceneView.duringSceneGui -= OnSceneGUI;
-            CleanupMeshlets();
+            CleanupPreview();
 
-            if (meshletMaterial != null)
-                DestroyImmediate(meshletMaterial);
+            if (previewMaterial != null)
+                DestroyImmediate(previewMaterial);
         }
 
         private void OnGUI()
         {
-            EditorGUILayout.LabelField("Meshlet Visualization Tool", EditorStyles.boldLabel);
+            EditorGUILayout.LabelField("Meshlet Generator", EditorStyles.boldLabel);
             EditorGUILayout.Space();
 
             // Object selection
             EditorGUI.BeginChangeCheck();
-            targetObject =
-                EditorGUILayout.ObjectField("Target Mesh Object", targetObject, typeof(GameObject), true) as GameObject;
+            targetObject = EditorGUILayout.ObjectField("Target Mesh Object", targetObject, typeof(GameObject), true) as GameObject;
             if (EditorGUI.EndChangeCheck())
             {
-                CleanupMeshlets();
-                showMeshlets = false;
+                CleanupPreview();
+                showPreview = false;
             }
 
             if (targetObject == null)
@@ -82,41 +94,38 @@ namespace Nanite
             EditorGUILayout.Space();
             EditorGUILayout.BeginHorizontal();
 
-            if (GUILayout.Button(showMeshlets ? "Hide Meshlets" : "Generate Meshlets"))
+            if (GUILayout.Button(showPreview ? "Hide Preview" : "Generate Preview"))
             {
-                if (!showMeshlets)
+                if (!showPreview)
                 {
                     GenerateMeshlets();
                 }
                 else
                 {
-                    CleanupMeshlets();
+                    CleanupPreview();
                 }
 
-                showMeshlets = !showMeshlets;
+                showPreview = !showPreview;
                 SceneView.RepaintAll();
             }
 
-            if (GUILayout.Button("Refresh"))
+            if (GUILayout.Button("Refresh Preview") && showPreview)
             {
-                if (showMeshlets)
-                {
-                    CleanupMeshlets();
-                    GenerateMeshlets();
-                    SceneView.RepaintAll();
-                }
+                CleanupPreview();
+                GenerateMeshlets();
+                SceneView.RepaintAll();
             }
 
             EditorGUILayout.EndHorizontal();
 
             // Display options
-            if (showMeshlets && meshletData.Count > 0)
+            if (showPreview && previewMeshlets.Count > 0)
             {
                 EditorGUILayout.Space();
-                EditorGUILayout.LabelField("Display Options", EditorStyles.boldLabel);
+                EditorGUILayout.LabelField("Preview Options", EditorStyles.boldLabel);
 
                 EditorGUI.BeginChangeCheck();
-                meshletScale = EditorGUILayout.Slider("Meshlet Scale", meshletScale, 0.5f, 1.0f);
+                previewScale = EditorGUILayout.Slider("Meshlet Scale", previewScale, 0.5f, 1.0f);
                 if (EditorGUI.EndChangeCheck())
                 {
                     SceneView.RepaintAll();
@@ -124,20 +133,29 @@ namespace Nanite
 
                 // Meshlet count info
                 EditorGUILayout.Space();
-                EditorGUILayout.LabelField($"Total Meshlets: {meshletData.Count}");
+                EditorGUILayout.LabelField($"Total Meshlets: {previewMeshlets.Count}");
 
-                // Meshlet list
+                // Save options
                 EditorGUILayout.Space();
-                EditorGUILayout.LabelField("Meshlets", EditorStyles.boldLabel);
+                EditorGUILayout.LabelField("Save Meshlet Data", EditorStyles.boldLabel);
+                savePath = EditorGUILayout.TextField("Save Path", savePath);
+                
+                if (GUILayout.Button("Save Meshlet Data"))
+                {
+                    SaveMeshletData();
+                }
+
+                // Meshlet list for preview selection
+                EditorGUILayout.Space();
+                EditorGUILayout.LabelField("Preview Meshlets", EditorStyles.boldLabel);
                 scrollPosition = EditorGUILayout.BeginScrollView(scrollPosition, GUILayout.Height(200));
 
-                for (int i = 0; i < meshletData.Count; i++)
+                for (int i = 0; i < previewMeshlets.Count; i++)
                 {
                     EditorGUI.BeginChangeCheck();
                     bool isSelected = (selectedMeshletIndex == i);
-                    bool newSelected =
-                        EditorGUILayout.ToggleLeft($"Meshlet {i} ({meshletData[i].mesh.vertexCount} vertices)",
-                            isSelected);
+                    bool newSelected = EditorGUILayout.ToggleLeft(
+                        $"Meshlet {i} ({previewMeshlets[i].mesh.vertexCount} vertices)", isSelected);
                     if (EditorGUI.EndChangeCheck())
                     {
                         selectedMeshletIndex = newSelected ? i : -1;
@@ -149,31 +167,57 @@ namespace Nanite
             }
         }
 
+        private void SaveMeshletData()
+        {
+            if (previewMeshlets.Count == 0 || generatedData == null)
+            {
+                EditorUtility.DisplayDialog("Error", "No meshlet data to save.", "OK");
+                return;
+            }
+
+            // Make sure the path has the right extension
+            if (!savePath.EndsWith(".asset"))
+                savePath += ".asset";
+
+            // Create the directory if it doesn't exist
+            string directory = System.IO.Path.GetDirectoryName(savePath);
+            if (!System.IO.Directory.Exists(directory))
+                System.IO.Directory.CreateDirectory(directory);
+
+            // Save source mesh reference
+            generatedData.sourceMesh = sourceMesh;
+
+            // Save the asset
+            AssetDatabase.CreateAsset(generatedData, savePath);
+            AssetDatabase.SaveAssets();
+            AssetDatabase.Refresh();
+
+            EditorUtility.DisplayDialog("Success", $"Meshlet data saved to {savePath}", "OK");
+        }
+
         private void OnSceneGUI(SceneView sceneView)
         {
-            if (!showMeshlets || targetObject == null || meshletData.Count == 0)
+            if (!showPreview || targetObject == null || previewMeshlets.Count == 0)
                 return;
 
             Matrix4x4 objectMatrix = targetObject.transform.localToWorldMatrix;
 
             // Render meshlets
-            for (int i = 0; i < meshletData.Count; i++)
+            for (int i = 0; i < previewMeshlets.Count; i++)
             {
-                var data = meshletData[i];
+                var data = previewMeshlets[i];
 
                 // Skip rendering if this isn't the selected meshlet (when one is selected)
                 if (selectedMeshletIndex != -1 && selectedMeshletIndex != i)
                     continue;
 
-                // Adjust the color alpha for better visibility
-                Color renderColor = data.color;
-                propertyBlock.SetColor("_Color", renderColor);
+                propertyBlock.SetColor("_Color", data.color);
 
                 // Apply scaling based on the slider
-                Matrix4x4 scaledMatrix = Matrix4x4.Scale(Vector3.one * meshletScale);
+                Matrix4x4 scaledMatrix = Matrix4x4.Scale(Vector3.one * previewScale);
                 Matrix4x4 finalMatrix = objectMatrix * data.localTransform * scaledMatrix;
 
-                Graphics.DrawMesh(data.mesh, finalMatrix, meshletMaterial, 0, sceneView.camera, 0, propertyBlock);
+                Graphics.DrawMesh(data.mesh, finalMatrix, previewMaterial, 0, sceneView.camera, 0, propertyBlock);
             }
         }
 
@@ -181,11 +225,10 @@ namespace Nanite
         {
             if (sourceMesh == null) return;
 
-            CleanupMeshlets();
+            CleanupPreview();
 
             try
             {
-                // Start showing progress
                 EditorUtility.DisplayProgressBar("Meshlet Generator", "Preparing mesh data...", 0.1f);
 
                 // Convert mesh data for the API
@@ -194,33 +237,46 @@ namespace Nanite
                 for (int i = 0; i < triangles.Length; i++)
                     indices[i] = (uint)triangles[i];
 
-                // Update progress before potentially long operation
                 EditorUtility.DisplayProgressBar("Meshlet Generator", "Processing mesh for meshlets...", 0.3f);
 
                 // Process the mesh to get meshlets data
                 MeshletsContext meshletsContext = NanitePlugin.ProcessMesh(indices, sourceMesh.vertices);
 
                 Debug.Log($"Generated {meshletsContext.meshlets.Length} meshlets");
-
+                
+                StringBuilder meshletInfo = new StringBuilder();
+                
+                // Create serializable meshlet data asset
+                generatedData = CreateInstance<MeshletData>();
+                generatedData.meshlets = new MeshletData.SerializedMeshlet[meshletsContext.meshlets.Length];
+                
                 // Create individual meshlet meshes with progress updates
                 for (int i = 0; i < meshletsContext.meshlets.Length; i++)
                 {
-                    // Calculate progress (from 0.4 to 0.9 during meshlet creation)
                     float progress = 0.4f + (0.5f * i / meshletsContext.meshlets.Length);
-                    EditorUtility.DisplayProgressBar("Meshlet Generator",
-                        $"Creating meshlet {i + 1}/{meshletsContext.meshlets.Length}...",
+                    EditorUtility.DisplayProgressBar("Meshlet Generator", 
+                        $"Creating meshlet {i + 1}/{meshletsContext.meshlets.Length}...", 
                         progress);
 
-                    MeshletRenderData renderData =
-                        CreateMeshletMesh(meshletsContext.meshlets[i], meshletsContext, i, sourceMesh);
+                    MeshletRenderData renderData = CreateMeshletMesh(meshletsContext.meshlets[i], meshletsContext, i, sourceMesh);
                     if (renderData != null)
                     {
-                        meshletData.Add(renderData);
+                        previewMeshlets.Add(renderData);
+                        
+                        // Create serialized meshlet data
+                        SerializeMeshletData(renderData, i);
+                        
+                        meshletInfo.AppendLine($"Meshlet {i}: " +
+                                            $"IndicesOffset={meshletsContext.meshlets[i].VertexOffset}, " +
+                                            $"PrimitivesOffset={meshletsContext.meshlets[i].TriangleOffset}, " +
+                                            $"IndicesCount={meshletsContext.meshlets[i].VertexCount}, " +
+                                            $"PrimitivesCount={meshletsContext.meshlets[i].TriangleCount}, " +
+                                            $"VertexCount={renderData.mesh.vertices.Length}");
                     }
                 }
-
-                // Final progress update
-                EditorUtility.DisplayProgressBar("Meshlet Generator", "Finalizing...", 0.95f);
+                
+                Debug.Log($"Meshlets: {meshletsContext.meshlets.Length}, Indices: {meshletsContext.vertices.Length}, Primitives: {meshletsContext.triangles.Length}");
+                Debug.Log(meshletInfo);
             }
             catch (Exception e)
             {
@@ -228,15 +284,26 @@ namespace Nanite
             }
             finally
             {
-                // Make sure to clear the progress bar when done or if an exception occurs
                 EditorUtility.ClearProgressBar();
             }
         }
 
-
-        private void CleanupMeshlets()
+        private void SerializeMeshletData(MeshletRenderData renderData, int index)
         {
-            foreach (var renderData in meshletData)
+            var serializedMeshlet = new MeshletData.SerializedMeshlet
+            {
+                vertices = renderData.mesh.vertices,
+                triangles = renderData.mesh.triangles,
+                normals = renderData.mesh.normals,
+                color = renderData.color
+            };
+            
+            generatedData.meshlets[index] = serializedMeshlet;
+        }
+
+        private void CleanupPreview()
+        {
+            foreach (var renderData in previewMeshlets)
             {
                 if (renderData.mesh != null)
                 {
@@ -244,12 +311,17 @@ namespace Nanite
                 }
             }
 
-            meshletData.Clear();
+            previewMeshlets.Clear();
             selectedMeshletIndex = -1;
+            
+            if (generatedData != null && !AssetDatabase.Contains(generatedData))
+            {
+                DestroyImmediate(generatedData);
+                generatedData = null;
+            }
         }
 
-        private MeshletRenderData CreateMeshletMesh(Meshlet meshlet, MeshletsContext data, int meshletIndex,
-            Mesh sourceMesh)
+        private MeshletRenderData CreateMeshletMesh(Meshlet meshlet, MeshletsContext data, int meshletIndex, Mesh sourceMesh)
         {
             // For the current meshlet create a color
             Color color = GetMeshletColor(meshletIndex);
@@ -281,8 +353,7 @@ namespace Nanite
                 uint idx2 = data.vertices[meshlet.VertexOffset + prim2];
 
                 // Vertex index validation
-                if (idx0 >= sourceMesh.vertexCount || idx1 >= sourceMesh.vertexCount ||
-                    idx2 >= sourceMesh.vertexCount)
+                if (idx0 >= sourceMesh.vertexCount || idx1 >= sourceMesh.vertexCount || idx2 >= sourceMesh.vertexCount)
                     continue;
 
                 // Add vertices to local mapping
@@ -356,4 +427,14 @@ namespace Nanite
             return Color.HSVToRGB(hue, 0.7f, 0.95f);
         }
     }
+
+    // Class to hold meshlet render data for the preview
+    [Serializable]
+    public class MeshletRenderData
+    {
+        public Mesh mesh;
+        public Matrix4x4 localTransform;
+        public Color color;
+    }
 }
+
