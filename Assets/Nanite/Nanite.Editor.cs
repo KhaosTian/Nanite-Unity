@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using System.Text;
+using Unity.VisualScripting;
 using UnityEngine;
 using UnityEditor;
 
@@ -27,7 +28,7 @@ namespace Nanite
     // Editor window for generating meshlets
     public class MeshletGenerator : EditorWindow
     {
-        private GameObject targetObject;
+        private UnityEngine.Object targetObject;
         private Mesh sourceMesh;
         private Material previewMaterial;
         private List<MeshletRenderData> previewMeshlets = new List<MeshletRenderData>();
@@ -71,7 +72,7 @@ namespace Nanite
 
             // Object selection
             EditorGUI.BeginChangeCheck();
-            targetObject = EditorGUILayout.ObjectField("Target Mesh Object", targetObject, typeof(GameObject), true) as GameObject;
+            targetObject = EditorGUILayout.ObjectField("Mesh", targetObject, typeof(Mesh), false);
             if (EditorGUI.EndChangeCheck())
             {
                 CleanupPreview();
@@ -81,14 +82,8 @@ namespace Nanite
             if (targetObject == null)
                 return;
 
-            MeshFilter meshFilter = targetObject.GetComponent<MeshFilter>();
-            if (meshFilter == null || meshFilter.sharedMesh == null)
-            {
-                EditorGUILayout.HelpBox("Selected object doesn't have a valid mesh.", MessageType.Warning);
-                return;
-            }
 
-            sourceMesh = meshFilter.sharedMesh;
+            sourceMesh = targetObject as Mesh;
 
             // Controls
             EditorGUILayout.Space();
@@ -125,7 +120,7 @@ namespace Nanite
                 EditorGUILayout.LabelField("Preview Options", EditorStyles.boldLabel);
 
                 EditorGUI.BeginChangeCheck();
-                previewScale = EditorGUILayout.Slider("Meshlet Scale", previewScale, 0.5f, 1.0f);
+                previewScale = EditorGUILayout.Slider("Meshlet Scale", previewScale, 0.5f, 100.0f);
                 if (EditorGUI.EndChangeCheck())
                 {
                     SceneView.RepaintAll();
@@ -200,7 +195,7 @@ namespace Nanite
             if (!showPreview || targetObject == null || previewMeshlets.Count == 0)
                 return;
 
-            Matrix4x4 objectMatrix = targetObject.transform.localToWorldMatrix;
+            Matrix4x4 objectMatrix = Matrix4x4.identity;
 
             // Render meshlets
             for (int i = 0; i < previewMeshlets.Count; i++)
@@ -270,8 +265,7 @@ namespace Nanite
                                             $"IndicesOffset={meshletsContext.meshlets[i].VertexOffset}, " +
                                             $"PrimitivesOffset={meshletsContext.meshlets[i].TriangleOffset}, " +
                                             $"IndicesCount={meshletsContext.meshlets[i].VertexCount}, " +
-                                            $"PrimitivesCount={meshletsContext.meshlets[i].TriangleCount}, " +
-                                            $"VertexCount={renderData.mesh.vertices.Length}");
+                                            $"PrimitivesCount={meshletsContext.meshlets[i].TriangleCount}" );
                     }
                 }
                 

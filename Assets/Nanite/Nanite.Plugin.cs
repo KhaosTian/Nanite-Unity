@@ -13,7 +13,7 @@ namespace Nanite
         public uint TriangleOffset;
         public uint VertexCount;
         public uint TriangleCount;
-
+        public static int SIZE => sizeof(uint) * 4;
     }
 
     [Serializable]
