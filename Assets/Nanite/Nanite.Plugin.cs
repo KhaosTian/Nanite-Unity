@@ -1,29 +1,9 @@
 ﻿using System;
 using System.Runtime.InteropServices;
 using UnityEngine;
-using UnityEngine.Serialization;
 
 namespace Nanite
 {
-    [Serializable]
-    [StructLayout(LayoutKind.Sequential)]
-    public struct Meshlet
-    {
-        public uint VertexOffset;
-        public uint TriangleOffset;
-        public uint VertexCount;
-        public uint TriangleCount;
-        public static int SIZE => sizeof(uint) * 4;
-    }
-
-    [Serializable]
-    public class MeshletsContext
-    {
-        public byte[] triangles;
-        public uint[] vertices;
-        public Meshlet[] meshlets;
-    }
-
     public class NanitePlugin
     {
         // DLL Import statements
@@ -45,7 +25,7 @@ namespace Nanite
         private static extern uint GetMeshletsCount(IntPtr context);
 
         [DllImport("NaniteUnity")]
-        private static extern bool GetMeshlets(IntPtr context, [Out] Meshlet[] meshlets, uint bufferSize);
+        private static extern bool GetMeshlets(IntPtr context, [Out] MeshletDescription[] meshlets, uint bufferSize);
 
         [DllImport("NaniteUnity")]
         private static extern uint GetVerticesCount(IntPtr context);
@@ -60,7 +40,7 @@ namespace Nanite
         private static extern bool GetTriangles(IntPtr context, [Out] byte[] primitives, uint bufferSize);
 
        
-        public static MeshletsContext ProcessMesh(uint[] indices, Vector3[] vertices)
+        public static MeshletCollection ProcessMesh(uint[] indices, Vector3[] vertices)
         {
             // Convert Vector3 array to float array
             var positions = new float[vertices.Length * 3];
@@ -89,28 +69,27 @@ namespace Nanite
 
                 try
                 {
-                    // Create result structure
-                    var result = new MeshletsContext();
+                    var collection = new MeshletCollection();
 
                     // Get meshlets
                     var meshletCount = GetMeshletsCount(context);
-                    result.meshlets = new Meshlet[meshletCount];
-                    if (!GetMeshlets(context, result.meshlets, meshletCount))
+                    collection.meshlets = new MeshletDescription[meshletCount];
+                    if (!GetMeshlets(context, collection.meshlets, meshletCount))
                         throw new Exception("Failed to get meshlets data");
 
                     // Get vertices
                     var verticesCount = GetVerticesCount(context);
-                    result.vertices = new uint[verticesCount];
-                    if (!GetVertices(context, result.vertices, verticesCount))
+                    collection.vertices = new uint[verticesCount];
+                    if (!GetVertices(context, collection.vertices, verticesCount))
                         throw new Exception("Failed to get vertices data");
 
                     // Get triangles
                     var triangleCount = GetTriangleCount(context);
-                    result.triangles = new byte[triangleCount];
-                    if (!GetTriangles(context, result.triangles, triangleCount))
+                    collection.triangles = new byte[triangleCount];
+                    if (!GetTriangles(context, collection.triangles, triangleCount))
                         throw new Exception("Failed to get triangles data");
 
-                    return result;
+                    return collection;
                 }
                 finally
                 {
