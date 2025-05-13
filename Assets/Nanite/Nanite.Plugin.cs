@@ -37,7 +37,7 @@ namespace Nanite
         private static extern uint GetTriangleCount(IntPtr context);
 
         [DllImport("NaniteUnity")]
-        private static extern bool GetTriangles(IntPtr context, [Out] byte[] primitives, uint bufferSize);
+        private static extern bool GetTriangles(IntPtr context, [Out] uint[] primitives, uint bufferSize);
 
        
         public static MeshletCollection ProcessMesh(uint[] indices, Vector3[] vertices)
@@ -85,7 +85,7 @@ namespace Nanite
 
                     // Get triangles
                     var triangleCount = GetTriangleCount(context);
-                    collection.triangles = new byte[triangleCount];
+                    collection.triangles = new uint[triangleCount];
                     if (!GetTriangles(context, collection.triangles, triangleCount))
                         throw new Exception("Failed to get triangles data");
 

@@ -18,7 +18,7 @@ namespace Nanite
     [StructLayout(LayoutKind.Sequential)]
     public class MeshletCollection
     {
-        public byte[] triangles;
+        public uint[] triangles;
         public uint[] vertices;
         public MeshletDescription[] meshlets;
     }

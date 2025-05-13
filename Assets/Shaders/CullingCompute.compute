@@ -26,6 +26,7 @@ struct EntityPara
     float4x4 model;
     uint vertexOffset;
     uint meshletIndex;
+    float3 color;
 };
 
 StructuredBuffer<EntityPara> _EntityBuffer;

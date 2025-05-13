@@ -337,7 +337,8 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: ad8594072b7e4e198a258acf170e06f4, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  SelectedMeshletAsset: {fileID: 11400000, guid: 6c4861580886e7d43a8ea5310a97be01, type: 2}
+  CullingCompute: {fileID: 7200000, guid: 8a568f0a928742ebbabfb92d75c881d9, type: 3}
+  SelectedMeshletAsset: {fileID: 11400000, guid: f7c03bfa9a6ff994eb6729f5523d7195, type: 2}
 --- !u!4 &1183649694
 Transform:
   m_ObjectHideFlags: 0

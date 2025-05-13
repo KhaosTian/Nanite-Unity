@@ -29,6 +29,7 @@ namespace Nanite
             public Matrix4x4 ModelMatrix;
             public uint VertexOffset;
             public uint MeshletIndex;
+            public Color EntityColor;
         }
 
         private struct MeshletBounds
@@ -71,7 +72,6 @@ namespace Nanite
         private void InitParas()
         {
             m_MeshletCount = SelectedMeshletAsset.Collection.meshlets.Length;
-            ;
             m_KernelGroupX = Mathf.CeilToInt(1.0f * m_MeshletCount / KERNEL_SIZE_X);
             m_ProxyBounds = new Bounds(Vector3.zero, 1000.0f * Vector3.one);
         }
@@ -101,7 +101,7 @@ namespace Nanite
 
 
             // Meshlet Triangles索引缓冲区
-            m_MeshletTrianglesBuffer = new ComputeBuffer(m_Collection.triangles.Length, sizeof(byte));
+            m_MeshletTrianglesBuffer = new ComputeBuffer(m_Collection.triangles.Length, sizeof(uint));
             m_MeshletTrianglesBuffer.name = $"{nameof(m_MeshletTrianglesBuffer)}:{m_MeshletTrianglesBuffer.count}";
             m_MeshletTrianglesBuffer.SetData(m_Collection.triangles);
 
@@ -133,7 +133,10 @@ namespace Nanite
             CullingCompute.SetInt(MeshletCountID, m_MeshletCount);
 
             CullingCompute.Dispatch(m_KernelID, m_KernelGroupX, 1, 1);
-
+            
+            var args = new uint[5];
+            m_IndirectDrawArgsBuffer.GetData(args);
+            
             Graphics.DrawProceduralIndirect(m_MeshletMaterial, m_ProxyBounds, MeshTopology.Triangles,
                 m_IndirectDrawArgsBuffer);
         }
