@@ -1,17 +1,17 @@
 ﻿using System;
 using System.Runtime.InteropServices;
+using UnityEngine.Serialization;
 
 namespace Nanite
 {
     [Serializable]
     [StructLayout(LayoutKind.Sequential)]
-    public struct MeshletDescription
+    public struct Meshlet
     {
-        public uint VertexOffset;
-        public uint TriangleOffset;
-        public uint VertexCount;
-        public uint TriangleCount;
-        public static int SIZE => sizeof(uint) * 4;
+        public uint VertOffset;
+        public uint PrimOffset;
+        public uint VertCount;
+        public uint PrimCount;
     }
     
     [Serializable]
@@ -20,6 +20,6 @@ namespace Nanite
     {
         public uint[] triangles;
         public uint[] vertices;
-        public MeshletDescription[] meshlets;
+        public Meshlet[] meshlets;
     }
 }

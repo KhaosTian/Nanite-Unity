@@ -25,7 +25,7 @@ namespace Nanite
         private static extern uint GetMeshletsCount(IntPtr context);
 
         [DllImport("NaniteUnity")]
-        private static extern bool GetMeshlets(IntPtr context, [Out] MeshletDescription[] meshlets, uint bufferSize);
+        private static extern bool GetMeshlets(IntPtr context, [Out] Meshlet[] meshlets, uint bufferSize);
 
         [DllImport("NaniteUnity")]
         private static extern uint GetVerticesCount(IntPtr context);
@@ -73,7 +73,7 @@ namespace Nanite
 
                     // Get meshlets
                     var meshletCount = GetMeshletsCount(context);
-                    collection.meshlets = new MeshletDescription[meshletCount];
+                    collection.meshlets = new Meshlet[meshletCount];
                     if (!GetMeshlets(context, collection.meshlets, meshletCount))
                         throw new Exception("Failed to get meshlets data");
 

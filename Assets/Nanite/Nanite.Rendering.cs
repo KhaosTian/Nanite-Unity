@@ -1,154 +1,342 @@
 ﻿using UnityEngine;
+using System.Runtime.InteropServices;
 
 namespace Nanite
 {
-    public class NaniteRendering : MonoBehaviour
+    
+public class MeshletRenderer : MonoBehaviour
+{
+    // Constants matching shader values
+    private const int AS_GROUP_SIZE = 32;
+    private const int MAX_VERTS = 64;
+    private const int MAX_PRIMS = 126;
+    private const int BATCH_MESHLET_SIZE = AS_GROUP_SIZE;
+
+    // Shader properties
+    public ComputeShader cullMeshletsCS; 
+    public ComputeShader processMeshletsCS;
+    public Material meshletMaterial;
+    public MeshletAsset meshletAsset;
+    
+    // Kernel IDs
+    private int cullKernelID;
+    private int processKernelID;
+
+    // Shader property IDs
+    private static readonly int ConstantsID = Shader.PropertyToID("_Constants");
+    private static readonly int InstanceID = Shader.PropertyToID("_Instance");
+    private static readonly int MeshInfoID = Shader.PropertyToID("_MeshInfo");
+    private static readonly int BatchIndexID = Shader.PropertyToID("_BatchIndex");
+    private static readonly int DispatchArgsID = Shader.PropertyToID("_DispatchArgs");
+    private static readonly int VertexBufferID = Shader.PropertyToID("_VertexBuffer");
+    private static readonly int IndexBufferID = Shader.PropertyToID("_IndexBuffer");
+
+    // Meshlet data references
+    private MeshletCollection meshletCollection;
+    private Mesh sourceMesh;
+    private int meshletCount;
+    
+    // ComputeBuffers
+    private ComputeBuffer constantsBuffer;
+    private ComputeBuffer instanceBuffer;
+    private ComputeBuffer meshInfoBuffer;
+    private ComputeBuffer dispatchArgsBuffer;
+    private ComputeBuffer verticesBuffer;
+    private ComputeBuffer uniqueVertexIndicesBuffer;
+    private ComputeBuffer primitiveIndicesBuffer;
+    private ComputeBuffer meshletsBuffer;
+    private ComputeBuffer cullDataBuffer;
+    private ComputeBuffer vertexBuffer;
+    private ComputeBuffer indexBuffer;
+    private ComputeBuffer batchIndexBuffer;
+    
+    // Batch processing
+    private int batchCount;
+    private Bounds renderBounds;
+
+    // Structures matching shader definitions
+    [System.Serializable]
+    [StructLayout(LayoutKind.Sequential)]
+    private struct Constants
     {
-        private const int MESHLET_VERTEX_COUNT = 64;
-        private const int KERNEL_SIZE_X = 64;
-
-        private static readonly int ArgsBufferID = Shader.PropertyToID("_IndirectDrawArgsBuffer");
-        private static readonly int PositionBufferID = Shader.PropertyToID("_PositionBuffer");
-        private static readonly int MeshletsBufferID = Shader.PropertyToID("_MeshletsBuffer");
-        private static readonly int MeshletVerticesBufferID = Shader.PropertyToID("_MeshletVerticesBuffer");
-        private static readonly int MeshletTrianglesBufferID = Shader.PropertyToID("_MeshletTrianglesBuffer");
-        private static readonly int MeshletCountID = Shader.PropertyToID("_MeshletCount");
-        private static readonly int VisibilityBufferID = Shader.PropertyToID("_VisibilityBuffer");
-
-        private int m_MeshletCount;
-
-
-        private Material m_MeshletMaterial;
-        public ComputeShader CullingCompute;
-        public MeshletAsset SelectedMeshletAsset;
-        private MeshletCollection m_Collection;
-        private Mesh m_SourceMesh;
-
-        private struct EntityPara
-        {
-            public Matrix4x4 ModelMatrix;
-            public uint VertexOffset;
-            public uint MeshletIndex;
-            public Color EntityColor;
-        }
-
-        private struct MeshletBounds
-        {
-            
-        }
+        public Matrix4x4 View;
+        public Matrix4x4 ViewProj;
+        public Vector4[] Planes;       // Size 6
+        public Vector3 ViewPosition;
+        public uint HighlightedIndex;
+        public Vector3 CullViewPosition;
+        public uint SelectedIndex;
+        public uint DrawMeshlets;
         
-        private ComputeBuffer m_IndirectDrawArgsBuffer; // 间接渲染参数
-        private ComputeBuffer m_VisibilityBuffer;
-        
-        private ComputeBuffer m_PositionBuffer; // 所有顶点数据
-        private ComputeBuffer m_MeshletsBuffer; // meshlet 数据
-        private ComputeBuffer m_MeshletVerticesBuffer; // meshlet 顶点索引数据
-        private ComputeBuffer m_MeshletTrianglesBuffer; // meshlet 局部三角形索引数据
-        
-        private ComputeBuffer m_EntityParaBuffer;
-        private ComputeBuffer m_MeshletRefBuffer;
-        private ComputeBuffer m_MeshletBoundsBuffer;
-
-        private int m_KernelID;
-        private int m_KernelGroupX;
-
-        private Plane[] m_CullingPlanes = new Plane[6];
-        private Vector4[] m_CullingPlaneVectors = new Vector4[6];
-
-        private Bounds m_ProxyBounds;
-
-        private void Start()
+        public Constants(Camera camera)
         {
-            if (!SelectedMeshletAsset) return;
-            m_Collection = SelectedMeshletAsset.Collection;
-            m_SourceMesh = SelectedMeshletAsset.SourceMesh;
-            m_MeshletMaterial = new Material(Shader.Find("Nanite/MeshletRendering"));
+            View = camera.worldToCameraMatrix;
+            ViewProj = GL.GetGPUProjectionMatrix(camera.projectionMatrix, false) * View;
             
-            InitParas();
-            InitBuffers();
-            SetupShaders();
-        }
-
-        private void InitParas()
-        {
-            m_MeshletCount = SelectedMeshletAsset.Collection.meshlets.Length;
-            m_KernelGroupX = Mathf.CeilToInt(1.0f * m_MeshletCount / KERNEL_SIZE_X);
-            m_ProxyBounds = new Bounds(Vector3.zero, 1000.0f * Vector3.one);
-        }
-
-        private void InitBuffers()
-        {
-            // 间接渲染参数缓冲区
-            m_IndirectDrawArgsBuffer = new ComputeBuffer(1, 5 * sizeof(uint), ComputeBufferType.IndirectArguments);
-            m_IndirectDrawArgsBuffer.name = nameof(m_IndirectDrawArgsBuffer);
-
-            // 顶点坐标缓冲区
-            m_PositionBuffer = new ComputeBuffer(m_SourceMesh.vertices.Length, sizeof(float) * 3);
-            m_PositionBuffer.name = $"{nameof(m_PositionBuffer)}:{m_PositionBuffer.count}";
-            m_PositionBuffer.SetData(m_SourceMesh.vertices);
-
-
-            // Meshlet缓冲区
-            m_MeshletsBuffer = new ComputeBuffer(m_MeshletCount, MeshletDescription.SIZE);
-            m_MeshletsBuffer.name = $"{nameof(m_MeshletsBuffer)}:{m_MeshletsBuffer.count}";
-            m_MeshletsBuffer.SetData(m_Collection.meshlets);
-
-
-            // Meshlet Vertices索引缓冲区
-            m_MeshletVerticesBuffer = new ComputeBuffer(m_Collection.vertices.Length, sizeof(uint));
-            m_MeshletVerticesBuffer.name = $"{nameof(m_MeshletVerticesBuffer)}:{m_MeshletVerticesBuffer.count}";
-            m_MeshletVerticesBuffer.SetData(m_Collection.vertices);
-
-
-            // Meshlet Triangles索引缓冲区
-            m_MeshletTrianglesBuffer = new ComputeBuffer(m_Collection.triangles.Length, sizeof(uint));
-            m_MeshletTrianglesBuffer.name = $"{nameof(m_MeshletTrianglesBuffer)}:{m_MeshletTrianglesBuffer.count}";
-            m_MeshletTrianglesBuffer.SetData(m_Collection.triangles);
-
-
-            // 可见性缓冲区
-            m_VisibilityBuffer = new ComputeBuffer(m_MeshletCount, sizeof(uint));
-            m_VisibilityBuffer.name = $"{nameof(m_VisibilityBuffer)}:{m_VisibilityBuffer.count}";
-            m_VisibilityBuffer.SetData(new uint[m_Collection.meshlets.Length]);
-        }
-
-        private void SetupShaders()
-        {
-            m_KernelID = CullingCompute.FindKernel("CullingMain");
-            CullingCompute.SetBuffer(m_KernelID, ArgsBufferID, m_IndirectDrawArgsBuffer);
-            CullingCompute.SetBuffer(m_KernelID, VisibilityBufferID, m_VisibilityBuffer);
+            var frustumPlanes = new Plane[6];
+            Planes = new Vector4[6];
+            GeometryUtility.CalculateFrustumPlanes(camera, frustumPlanes);
+            for (int i = 0; i < 6; i++)
+            {
+                Planes[i] = new Vector4(frustumPlanes[i].normal.x, frustumPlanes[i].normal.y, 
+                                      frustumPlanes[i].normal.z, frustumPlanes[i].distance);
+            }
             
-            m_MeshletMaterial.SetBuffer(VisibilityBufferID, m_VisibilityBuffer);
-            m_MeshletMaterial.SetBuffer(PositionBufferID, m_PositionBuffer);
-            m_MeshletMaterial.SetBuffer(MeshletsBufferID, m_MeshletsBuffer);
-            m_MeshletMaterial.SetBuffer(MeshletVerticesBufferID, m_VisibilityBuffer);
-            m_MeshletMaterial.SetBuffer(MeshletTrianglesBufferID, m_VisibilityBuffer);
-        }
-
-        private void Update()
-        {
-            if (!SelectedMeshletAsset) return;
-
-            m_IndirectDrawArgsBuffer.SetData(new uint[5] { MESHLET_VERTEX_COUNT, 0, 0, 0, 0 });
-            CullingCompute.SetInt(MeshletCountID, m_MeshletCount);
-
-            CullingCompute.Dispatch(m_KernelID, m_KernelGroupX, 1, 1);
-            
-            var args = new uint[5];
-            m_IndirectDrawArgsBuffer.GetData(args);
-            
-            Graphics.DrawProceduralIndirect(m_MeshletMaterial, m_ProxyBounds, MeshTopology.Triangles,
-                m_IndirectDrawArgsBuffer);
-        }
-
-        private void OnDestroy()
-        {
-            m_MeshletVerticesBuffer?.Release();
-            m_MeshletTrianglesBuffer?.Release();
-            m_PositionBuffer?.Release();
-            m_IndirectDrawArgsBuffer?.Release();
-            m_VisibilityBuffer?.Release();
-            m_MeshletsBuffer?.Release();
+            ViewPosition = camera.transform.position;
+            CullViewPosition = ViewPosition; // Typically the same, can differ for culling optimizations
+            HighlightedIndex = 0;
+            SelectedIndex = 0;
+            DrawMeshlets = 1;
         }
     }
+    
+    [System.Serializable]
+    [StructLayout(LayoutKind.Sequential)]
+    private struct Instance
+    {
+        public Matrix4x4 World;
+        public Matrix4x4 WorldIT;  // Inverse Transpose for normal transformation
+        public float Scale;
+        public uint Flags;
+        
+        public Instance(Transform transform, uint flags = 0)
+        {
+            World = transform.localToWorldMatrix;
+            WorldIT = Matrix4x4.Transpose(Matrix4x4.Inverse(World));
+            Scale = transform.lossyScale.x;  // Simplified, assumes uniform scale
+            Flags = flags;
+        }
+    }
+    
+    [System.Serializable]
+    [StructLayout(LayoutKind.Sequential)]
+    private struct MeshInfo
+    {
+        public uint IndexSize;
+        public uint MeshletCount;
+        public uint LastMeshletVertCount;
+        public uint LastMeshletPrimCount;
+    }
+    
+    [System.Serializable]
+    [StructLayout(LayoutKind.Sequential)]
+    struct CullData
+    {
+        public Vector4 BoundingSphere;
+        public uint NormalCone;
+        public float ApexOffset;
+    }
+    
+    [System.Serializable]
+    [StructLayout(LayoutKind.Sequential)]
+    struct Meshlet
+    {
+        public uint VertCount;
+        public uint VertOffset;
+        public uint PrimCount;
+        public uint PrimOffset;
+    }
+    
+    [System.Serializable]
+    [StructLayout(LayoutKind.Sequential)]
+    struct VertexOut
+    {
+        public Vector4 PositionHS;
+        public Vector3 PositionVS;
+        public Vector3 Normal;
+        public uint MeshletIndex;
+    }
+    
+    private static readonly int PrimitiveIndicesBufferID = Shader.PropertyToID("_PrimitiveIndices");
+    private static readonly int UniqueVertexIndicesBufferID = Shader.PropertyToID("_UniqueVertexIndices");
+    private static readonly int VerticesBufferID = Shader.PropertyToID("_Vertices");
+    private static readonly int MeshletsBufferID = Shader.PropertyToID("_Meshlets");
+    private static readonly int MeshletCullDataBufferID = Shader.PropertyToID("_MeshletCullData");
+
+    private void Start()
+    {
+        if (meshletAsset == null)
+        {
+            Debug.LogError("MeshletAsset is not assigned!");
+            return;
+        }
+        
+        // Get meshlet data
+        meshletCollection = meshletAsset.Collection;
+        sourceMesh = meshletAsset.SourceMesh;
+        meshletCount = meshletCollection.meshlets.Length;
+        
+        // Calculate batch count
+        batchCount = Mathf.CeilToInt(meshletCount / (float)BATCH_MESHLET_SIZE);
+        
+        // Initialize bounds for rendering
+        renderBounds = new Bounds(transform.position, Vector3.one * 1000f); // Large bounds
+        
+        // Find shader kernels
+        cullKernelID = cullMeshletsCS.FindKernel("CullMeshlets");
+        processKernelID = processMeshletsCS.FindKernel("ProcessMeshlets");
+        
+        // Initialize buffers
+        InitializeBuffers();
+        
+        // Set up shader bindings
+        SetupShaderBindings();
+    }
+
+    private void InitializeBuffers()
+    {
+        // Create constant buffers
+        constantsBuffer = new ComputeBuffer(1, Marshal.SizeOf<Constants>());
+        instanceBuffer = new ComputeBuffer(1, Marshal.SizeOf<Instance>());
+        
+        // Set up MeshInfo
+        var meshInfo = new MeshInfo
+        {
+            IndexSize = 4, // Assuming 32-bit indices
+            MeshletCount = (uint)meshletCount,
+            LastMeshletVertCount = meshletCollection.meshlets[meshletCount-1].VertCount,
+            LastMeshletPrimCount = meshletCollection.meshlets[meshletCount-1].PrimCount
+        };
+        meshInfoBuffer = new ComputeBuffer(1, Marshal.SizeOf<MeshInfo>());
+        meshInfoBuffer.SetData(new[] { meshInfo });
+        
+        // Create source data buffers
+        meshletsBuffer = new ComputeBuffer(meshletCount, Marshal.SizeOf<Meshlet>());
+        meshletsBuffer.SetData(meshletCollection.meshlets);
+        
+        verticesBuffer = new ComputeBuffer(sourceMesh.vertexCount, Marshal.SizeOf(typeof(Vector3)) * 2); // Position + Normal
+        // Fill vertices buffer (would need to extract positions and normals from mesh)
+        
+        // Setup unique vertex indices and primitive indices
+        uniqueVertexIndicesBuffer = new ComputeBuffer(meshletCollection.vertices.Length, sizeof(uint));
+        uniqueVertexIndicesBuffer.SetData(meshletCollection.vertices);
+        
+        primitiveIndicesBuffer = new ComputeBuffer(meshletCollection.triangles.Length, sizeof(uint));
+        primitiveIndicesBuffer.SetData(meshletCollection.triangles);
+        
+        // Setup cull data if available (simplified)
+        cullDataBuffer = new ComputeBuffer(meshletCount, Marshal.SizeOf<CullData>());
+        // cullDataBuffer.SetData would go here with actual cull data
+        
+        // Set up dispatch args buffer
+        int dispatchArgsSize = (10 + AS_GROUP_SIZE) * batchCount;
+        dispatchArgsBuffer = new ComputeBuffer(dispatchArgsSize, sizeof(uint), ComputeBufferType.IndirectArguments);
+        
+        // Create output buffers for mesh data
+        int totalProcessedMeshlets = batchCount * BATCH_MESHLET_SIZE;
+        vertexBuffer = new ComputeBuffer(totalProcessedMeshlets * MAX_VERTS, Marshal.SizeOf<VertexOut>());
+        indexBuffer = new ComputeBuffer(totalProcessedMeshlets * MAX_PRIMS * 3, sizeof(uint));
+        
+        // Batch index buffer
+        batchIndexBuffer = new ComputeBuffer(1, sizeof(uint));
+    }
+
+    private void SetupShaderBindings()
+    {
+        // Bind buffers to the cull compute shader
+        cullMeshletsCS.SetBuffer(cullKernelID, ConstantsID, constantsBuffer);
+        cullMeshletsCS.SetBuffer(cullKernelID, InstanceID, instanceBuffer);
+        cullMeshletsCS.SetBuffer(cullKernelID, MeshInfoID, meshInfoBuffer);
+        cullMeshletsCS.SetBuffer(cullKernelID, DispatchArgsID, dispatchArgsBuffer);
+        cullMeshletsCS.SetBuffer(cullKernelID, MeshletCullDataBufferID, cullDataBuffer);
+        
+        // Bind buffers to the process compute shader
+        processMeshletsCS.SetBuffer(processKernelID, ConstantsID, constantsBuffer);
+        processMeshletsCS.SetBuffer(processKernelID, InstanceID, instanceBuffer);
+        processMeshletsCS.SetBuffer(processKernelID, MeshInfoID, meshInfoBuffer);
+        processMeshletsCS.SetBuffer(processKernelID, DispatchArgsID, dispatchArgsBuffer);
+        processMeshletsCS.SetBuffer(processKernelID, BatchIndexID, batchIndexBuffer);
+        processMeshletsCS.SetBuffer(processKernelID, MeshletsBufferID, meshletsBuffer);
+        processMeshletsCS.SetBuffer(processKernelID, VerticesBufferID, verticesBuffer);
+        processMeshletsCS.SetBuffer(processKernelID, UniqueVertexIndicesBufferID, uniqueVertexIndicesBuffer);
+        processMeshletsCS.SetBuffer(processKernelID, PrimitiveIndicesBufferID, primitiveIndicesBuffer);
+        processMeshletsCS.SetBuffer(processKernelID, VertexBufferID, vertexBuffer);
+        processMeshletsCS.SetBuffer(processKernelID, IndexBufferID, indexBuffer);
+        
+        // Bind buffers to material for final rendering
+        meshletMaterial.SetBuffer(VertexBufferID, vertexBuffer);
+        meshletMaterial.SetBuffer(IndexBufferID, indexBuffer);
+    }
+
+    private void Update()
+    {
+        if (meshletAsset == null) return;
+        
+        // Update constant buffers
+        var constants = new Constants(Camera.main);
+        constantsBuffer.SetData(new[] { constants });
+        
+        var instance = new Instance(transform);
+        instanceBuffer.SetData(new[] { instance });
+        
+        // Execute CullMeshlets compute shader (AS stage)
+        cullMeshletsCS.Dispatch(cullKernelID, Mathf.CeilToInt(meshletCount / (float)AS_GROUP_SIZE), 1, 1);
+        
+        // Process each batch
+        for (int i = 0; i < batchCount; i++)
+        {
+            // Set batch index
+            batchIndexBuffer.SetData(new[] { (uint)i });
+            
+            // Execute ProcessMeshlets compute shader (MS stage)
+            processMeshletsCS.Dispatch(processKernelID, 1, 1, 1); // We use groups to control batch processing
+            
+            // Draw this batch
+            DrawBatch(i);
+        }
+    }
+    
+    private void DrawBatch(int batchIndex)
+    {
+        var args = new uint[]
+        {
+            0,  // We'll fill this from the compute shader result
+            1,  // instance count
+            0,  // start index location (depends on batch)
+            0,  // base vertex location
+            0   // start instance location
+        };
+        
+        // Read the index count for this batch from the dispatch args buffer
+        int argsOffset = (10 + AS_GROUP_SIZE) * batchIndex;
+        var batchData = new uint[1];
+        dispatchArgsBuffer.GetData(batchData,0, argsOffset + 7, 1); // Read x (visible meshlet count)
+        uint visibleMeshletCount = batchData[0];
+        
+        // Calculate indices to draw
+        args[0] = visibleMeshletCount * MAX_PRIMS * 3;
+        args[2] = (uint)(MAX_PRIMS * 3 * BATCH_MESHLET_SIZE * batchIndex);
+        
+        // Since we can't directly modify the index buffer on GPU, we create a small buffer for DrawProcedural
+        var drawArgsBuffer = new ComputeBuffer(1, args.Length * sizeof(uint), ComputeBufferType.IndirectArguments);
+        drawArgsBuffer.SetData(args);
+        
+        // Draw using Graphics.DrawProceduralIndirect
+        Graphics.DrawProceduralIndirect(
+            meshletMaterial,
+            renderBounds,
+            MeshTopology.Triangles,
+            drawArgsBuffer
+        );
+        
+        drawArgsBuffer.Release();
+    }
+
+    private void OnDestroy()
+    {
+        constantsBuffer?.Release();
+        instanceBuffer?.Release();
+        meshInfoBuffer?.Release();
+        dispatchArgsBuffer?.Release();
+        verticesBuffer?.Release();
+        uniqueVertexIndicesBuffer?.Release();
+        primitiveIndicesBuffer?.Release();
+        meshletsBuffer?.Release();
+        cullDataBuffer?.Release();
+        vertexBuffer?.Release();
+        indexBuffer?.Release();
+        batchIndexBuffer?.Release();
+    }
+}
+
 }
