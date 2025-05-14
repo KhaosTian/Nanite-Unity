@@ -112,19 +112,20 @@ void ProcessMeshlets(uint3 id : SV_DispatchThreadID, uint3 groupThreadId : SV_Gr
 
     if (gtid< m.PrimCount)
     {
-        // 获取三角形索引
-        uint3 tri = GetPrimitive(m, gtid);
+        // 获取局部三角形索引
+        uint3 localTri = GetPrimitive(m, gtid);
         
         // 计算全局meshlet索引 (跨批次)
         uint globalMeshletIndex = BATCH_MESHLET_SIZE * batchIdx + gid;
         
-        // 计算输出索引地址
+        // 计算当前三角形在全局顶点索引缓冲区的起始地址
         uint baseAddr = 3 * (MAX_PRIMS * globalMeshletIndex + gtid);
+        // 计算当前meshlet的顶点在全局顶点缓冲区的起始索引
         uint baseVtx = MAX_VERTS * globalMeshletIndex;
         
-        // 写入索引缓冲区 (添加顶点基础偏移)
-        _IndexBuffer[baseAddr + 0] = baseVtx + tri.x;
-        _IndexBuffer[baseAddr + 1] = baseVtx + tri.y;
-        _IndexBuffer[baseAddr + 2] = baseVtx + tri.z;
+        // 顶点起始索引+局部索引，写入全局三角形索引缓冲区
+        _IndexBuffer[baseAddr + 0] = baseVtx + localTri.x;
+        _IndexBuffer[baseAddr + 1] = baseVtx + localTri.y;
+        _IndexBuffer[baseAddr + 2] = baseVtx + localTri.z;
     }
 }
