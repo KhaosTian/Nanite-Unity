@@ -1,0 +1,130 @@
+﻿#pragma kernel ProcessMeshlets
+
+#include "MeshletCommon.hlsl"
+
+struct MeshOutCounts
+{
+    uint VertCount;
+    uint PrimCount;
+};
+
+StructuredBuffer<uint> _DispatchArgs;
+ConstantBuffer<uint> _BatchIndex;
+
+RWStructuredBuffer<VertexOut> _VertexBuffer;
+RWBuffer<uint> _IndexBuffer;
+
+// 解包三角形索引
+uint3 UnpackPrimitive(uint primitive)
+{
+    return uint3(primitive & 0x3FF, (primitive >> 10) & 0x3FF, (primitive >> 20) & 0x3FF);
+}
+
+// 从meshlet中获取顶点索引
+uint GetVertexIndex(Meshlet m, uint localIndex)
+{
+    localIndex = m.VertOffset + localIndex;
+    
+    if (_MeshInfo.IndexSize == 4)
+    {
+        // 32位索引
+        return _UniqueVertexIndices.Load(localIndex * 4);
+    }
+    else
+    {
+        // 16位索引 - 需要按照正确的字节对齐读取
+        const uint wordOffset = (localIndex & 0x1);
+        const uint byteOffset = (localIndex / 2) * 4;
+        
+        // 读取两个16位索引的组合值
+        const uint indexPair = _UniqueVertexIndices.Load(byteOffset);
+        
+        // 提取正确的16位值
+        const uint index = (indexPair >> (wordOffset * 16)) & 0xffff;
+        
+        return index;
+    }
+}
+
+// 从meshlet获取三角形
+uint3 GetPrimitive(Meshlet m, uint index)
+{
+    return UnpackPrimitive(_PrimitiveIndices[m.PrimOffset + index]);
+}
+
+// 计算并输出顶点属性
+VertexOut GetVertexAttributes(uint meshletIndex, uint vertexIndex)
+{
+    Vertex v = _Vertices[vertexIndex];
+    
+    const float4 positionWS = mul(float4(v.Position, 1.0), _Instance.World);
+    
+    VertexOut vout;
+    vout.PositionVS = mul(positionWS, _Constants.View).xyz;
+    vout.PositionHS = mul(positionWS, _Constants.ViewProj);
+    vout.Normal = mul(v.Normal, (float3x3)_Instance.WorldIT);
+    vout.MeshletIndex = meshletIndex;
+    
+    return vout;
+}
+
+// 用于计算每批次处理的分派参数偏移
+uint GetDispatchArgsOffset(uint batchIdx)
+{
+    return sizeof(DispatchArgs)/sizeof(uint) * batchIdx;
+}
+
+
+[numthreads(MS_GROUP_SIZE, 1, 1)]
+void ProcessMeshlets(uint3 id : SV_DispatchThreadID, uint3 groupThreadId : SV_GroupThreadID, uint3 groupId : SV_GroupID)
+{
+    uint dtid = id.x;
+    uint gtid = groupThreadId.x;
+    uint gid = groupId.x;
+    uint batchIdx = _BatchIndex.x;
+
+    uint argsOffset = GetDispatchArgsOffset(batchIdx);
+    
+    // 可见meshlet数存储在DispatchArgs第7位参数
+    uint visibleCount = _DispatchArgs[argsOffset + 7];
+    // 每个线程组处理一个meshlet，线程组数应在可见数范围内
+    if (gid >= visibleCount) return;
+
+    // meshlet indices存储在DispatchArgs第10位参数，gid组索引代表第x个meshlet
+    uint meshletIndex = _DispatchArgs[argsOffset + 10 + gid];
+    if (meshletIndex>=_MeshInfo.MeshletCount) return;
+
+    Meshlet m = _Meshlets[meshletIndex];
+
+    if (gtid< m.VertCount)
+    {
+        uint vertexIndex = GetVertexIndex(m, gtid);
+        
+        // 计算全局meshlet索引 (跨批次)
+        uint globalMeshletIndex = BATCH_MESHLET_SIZE * batchIdx + gid;
+        
+        // 计算输出顶点索引
+        uint outputIndex = MAX_VERTS * globalMeshletIndex + gtid;
+        
+        // 处理顶点并写入输出缓冲区
+        _VertexBuffer[outputIndex] = GetVertexAttributes(meshletIndex, vertexIndex);
+    }
+
+    if (gtid< m.PrimCount)
+    {
+        // 获取三角形索引
+        uint3 tri = GetPrimitive(m, gtid);
+        
+        // 计算全局meshlet索引 (跨批次)
+        uint globalMeshletIndex = BATCH_MESHLET_SIZE * batchIdx + gid;
+        
+        // 计算输出索引地址
+        uint baseAddr = 3 * (MAX_PRIMS * globalMeshletIndex + gtid);
+        uint baseVtx = MAX_VERTS * globalMeshletIndex;
+        
+        // 写入索引缓冲区 (添加顶点基础偏移)
+        _IndexBuffer[baseAddr + 0] = baseVtx + tri.x;
+        _IndexBuffer[baseAddr + 1] = baseVtx + tri.y;
+        _IndexBuffer[baseAddr + 2] = baseVtx + tri.z;
+    }
+}
