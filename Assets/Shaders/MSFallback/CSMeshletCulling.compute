@@ -3,123 +3,34 @@
 #include "MeshletCommon.hlsl"
 
 // 线程组内共享内存
-groupshared Payload s_Payload; // 可见meshlet索引数组
-groupshared uint s_VisibleCount; // 可见meshlet计数
 
+RWStructuredBuffer<uint> _VisibleMeshletIndices;
 RWStructuredBuffer<uint> _DispatchArgs;
 
-// 使用视锥剔除和法线锥背面剔除测试meshlet的可见性
-bool IsVisible(CullData c, float4x4 world, float scale, float3 viewPos)
+bool IsVisible()
 {
     // 暂时不进行测试
-    return true;
-
-    if ((_Instance.Flags & CULL_FLAG) == 0)
-        return true;
-
-    // Do a cull test of the bounding sphere against the view frustum planes.
-    const float4 center = mul(world, float4(c.BoundingSphere.xyz, 1.0));
-    const float radius = c.BoundingSphere.w * scale;
-
-    for (uint i = 0; i < 6; ++i)
-        if (dot(center, _Constants.Planes[i]) < -radius)
-            return false;
-
-    // Do normal cone culling
-    if (IsConeDegenerate(c))
-        return true; // Cone is degenerate - spread is wider than a hemisphere.
-
-    // Unpack the normal cone from its 8-bit uint compression
-    const float4 normalCone = UnpackCone(c.NormalCone);
-
-    // Transform axis to world space
-    const float3 axis = normalize(mul((float3x3)world, normalCone.xyz));
-
-    // Offset the normal cone axis from the meshlet center-point - make sure to account for world scaling
-    const float3 apex = center.xyz - axis * c.ApexOffset * scale;
-    const float3 view = normalize(viewPos - apex);
-
-    // The normal cone w-component stores -cos(angle + 90 deg)
-    // This is the min dot product along the inverted axis from which all the meshlet's triangles are backface
-    if (dot(view, -axis) > normalCone.w)
-        return false;
-
-    // All tests passed - it will merit pixels
     return true;
 }
 
 [numthreads(AS_GROUP_SIZE, 1, 1)]
 void CullingMeshlet(
-    uint3 id : SV_DispatchThreadID, // 全局线程id
-    uint3 groupThreadId : SV_GroupThreadID, // 组内线程id
-    uint3 groupId : SV_GroupID) // 线程组id
+    uint3 id : SV_DispatchThreadID)
 {
-    uint dtid = id.x;
-    uint gtid = groupThreadId.x;
-    uint gid = groupId.x;
-    
-    // 初始化组内共享内存计数器
-    if (gtid == 0)
-    {
-        s_VisibleCount = 0;
-    }
-
-    // 组内线程同步，等待计数器初始化完成
-    GroupMemoryBarrierWithGroupSync();
-
-    bool visible = false;
-
     // 每个线程处理一个meshlet，全局线程id就是meshlet的索引
-    uint meshletIndex = dtid;
+    uint meshletIndex = id.x;
 
     // 全局线程数不能超过实际meshlet数量
-    if (meshletIndex < _MeshInfo.MeshletCount)
-    {
-        // 进行可见性测试
-        visible = IsVisible(
-            _MeshletCullData[meshletIndex],
-            _Instance.World,
-            _Instance.Scale,
-            _Constants.CullViewPosition);
-    }
+    if (meshletIndex >= _MeshInfo.MeshletCount) return;
 
+    // 进行可见性测试
+    bool visible = IsVisible();
+    
     if (visible)
     {
-        uint threadIndex = 0;
+        uint visibleIndex = 0;
         // 原子操作获取可见meshlet数量并加1，记录该meshlet的索引
-        InterlockedAdd(s_VisibleCount, 1, threadIndex);
-        s_Payload.MeshletIndices[threadIndex] = meshletIndex;
-    }
-
-    // 组内线程同步，等待可见性检查完成
-    GroupMemoryBarrierWithGroupSync();
-
-    // 计算dispatchArgs缓冲区的偏移量
-    uint stride = sizeof(DispatchArgs) / sizeof(uint);
-    uint base = stride * gid;
-
-    // 由组内第一个线程写入结果和调度参数
-    if (gtid == 0)
-    {
-        uint indexCount = 3 * MAX_PRIMS * AS_GROUP_SIZE;
-        _DispatchArgs[base + 0] = gid; // BatchIdx
-        _DispatchArgs[base + 1] = indexCount; // IndexCountPerInstance
-        _DispatchArgs[base + 2] = 1; // InstanceCount
-        _DispatchArgs[base + 3] = indexCount * gid; // StartIndexLocation
-        _DispatchArgs[base + 4] = 0; // BaseVertexLocation
-        _DispatchArgs[base + 5] = 0; // StartInstanceLocation
-
-        // ASDispatchMeshArgs部分
-        _DispatchArgs[base + 6] = gid; // BatchIdx
-        _DispatchArgs[base + 7] = s_VisibleCount; // x - 可见meshlet数量
-        _DispatchArgs[base + 8] = 1; // y
-        _DispatchArgs[base + 9] = 1; // z
-    }
-
-    // 组内线程数不能超过实际可见数量
-    if (gtid < s_VisibleCount)
-    {
-        // 组内可见meshlet索引写入全局数据
-        _DispatchArgs[base + gtid + 10] = s_Payload.MeshletIndices[gtid];
+        InterlockedAdd(_DispatchArgs[1], 1, visibleIndex);
+        _VisibleMeshletIndices[visibleIndex] = meshletIndex;
     }
 }

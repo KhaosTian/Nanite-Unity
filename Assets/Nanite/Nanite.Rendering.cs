@@ -1,5 +1,6 @@
 ﻿using UnityEngine;
 using System.Runtime.InteropServices;
+using UnityEngine.Rendering;
 
 namespace Nanite
 {
@@ -18,6 +19,11 @@ public class MeshletRenderer : MonoBehaviour
     public Material meshletMaterial;
     public MeshletAsset meshletAsset;
     
+    // Meshlet data references
+    private MeshletCollection meshletCollection;
+    private Mesh sourceMesh;
+    private int meshletCount;
+    
     // Kernel IDs
     private int cullKernelID;
     private int processKernelID;
@@ -30,11 +36,11 @@ public class MeshletRenderer : MonoBehaviour
     private static readonly int DispatchArgsID = Shader.PropertyToID("_DispatchArgs");
     private static readonly int VertexBufferID = Shader.PropertyToID("_VertexBuffer");
     private static readonly int IndexBufferID = Shader.PropertyToID("_IndexBuffer");
-
-    // Meshlet data references
-    private MeshletCollection meshletCollection;
-    private Mesh sourceMesh;
-    private int meshletCount;
+    private static readonly int PrimitiveIndicesBufferID = Shader.PropertyToID("_PrimitiveIndices");
+    private static readonly int UniqueVertexIndicesBufferID = Shader.PropertyToID("_UniqueVertexIndices");
+    private static readonly int VerticesBufferID = Shader.PropertyToID("_Vertices");
+    private static readonly int MeshletsBufferID = Shader.PropertyToID("_Meshlets");
+    private static readonly int MeshletCullDataBufferID = Shader.PropertyToID("_MeshletCullData");
     
     // ComputeBuffers
     private ComputeBuffer constantsBuffer;
@@ -120,7 +126,7 @@ public class MeshletRenderer : MonoBehaviour
     
     [System.Serializable]
     [StructLayout(LayoutKind.Sequential)]
-    struct CullData
+    private struct CullData
     {
         public Vector4 BoundingSphere;
         public uint NormalCone;
@@ -129,7 +135,7 @@ public class MeshletRenderer : MonoBehaviour
     
     [System.Serializable]
     [StructLayout(LayoutKind.Sequential)]
-    struct Meshlet
+    private struct Meshlet
     {
         public uint VertCount;
         public uint VertOffset;
@@ -139,19 +145,13 @@ public class MeshletRenderer : MonoBehaviour
     
     [System.Serializable]
     [StructLayout(LayoutKind.Sequential)]
-    struct VertexOut
+    private struct VertexOut
     {
         public Vector4 PositionHS;
         public Vector3 PositionVS;
         public Vector3 Normal;
         public uint MeshletIndex;
     }
-    
-    private static readonly int PrimitiveIndicesBufferID = Shader.PropertyToID("_PrimitiveIndices");
-    private static readonly int UniqueVertexIndicesBufferID = Shader.PropertyToID("_UniqueVertexIndices");
-    private static readonly int VerticesBufferID = Shader.PropertyToID("_Vertices");
-    private static readonly int MeshletsBufferID = Shader.PropertyToID("_Meshlets");
-    private static readonly int MeshletCullDataBufferID = Shader.PropertyToID("_MeshletCullData");
 
     private void Start()
     {
@@ -277,9 +277,8 @@ public class MeshletRenderer : MonoBehaviour
         {
             // Set batch index
             batchIndexBuffer.SetData(new[] { (uint)i });
-            
             // Execute ProcessMeshlets compute shader (MS stage)
-            processMeshletsCS.Dispatch(processKernelID, 1, 1, 1); // We use groups to control batch processing
+            processMeshletsCS.DispatchIndirect(processKernelID, dispatchArgsBuffer); // We use groups to control batch processing
             
             // Draw this batch
             DrawBatch(i);

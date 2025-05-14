@@ -9,7 +9,7 @@ struct MeshOutCounts
 };
 
 StructuredBuffer<uint> _DispatchArgs;
-ConstantBuffer<uint> _BatchIndex;
+StructuredBuffer<uint> _VisibleMeshletIndices;
 
 RWStructuredBuffer<VertexOut> _VertexBuffer;
 RWBuffer<uint> _IndexBuffer;
@@ -30,20 +30,18 @@ uint GetVertexIndex(Meshlet m, uint localIndex)
         // 32位索引
         return _UniqueVertexIndices.Load(localIndex * 4);
     }
-    else
-    {
+
         // 16位索引 - 需要按照正确的字节对齐读取
         const uint wordOffset = (localIndex & 0x1);
         const uint byteOffset = (localIndex / 2) * 4;
         
         // 读取两个16位索引的组合值
         const uint indexPair = _UniqueVertexIndices.Load(byteOffset);
-        
-        // 提取正确的16位值
-        const uint index = (indexPair >> (wordOffset * 16)) & 0xffff;
-        
-        return index;
-    }
+
+    // 提取正确的16位值
+    const uint index = (indexPair >> (wordOffset * 16)) & 0xffff;
+
+    return index;
 }
 
 // 从meshlet获取三角形
@@ -59,71 +57,51 @@ VertexOut GetVertexAttributes(uint meshletIndex, uint vertexIndex)
     
     const float4 positionWS = mul(float4(v.Position, 1.0), _Instance.World);
     
-    VertexOut vout;
-    vout.PositionVS = mul(positionWS, _Constants.View).xyz;
-    vout.PositionHS = mul(positionWS, _Constants.ViewProj);
-    vout.Normal = mul(v.Normal, (float3x3)_Instance.WorldIT);
-    vout.MeshletIndex = meshletIndex;
+    VertexOut o;
+    o.PositionVS = mul(positionWS, _Constants.View).xyz;
+    o.PositionHS = mul(positionWS, _Constants.ViewProj);
+    o.Normal = mul(v.Normal, (float3x3)_Instance.WorldIT);
+    o.MeshletIndex = meshletIndex;
     
-    return vout;
+    return o;
 }
-
-// 用于计算每批次处理的分派参数偏移
-uint GetDispatchArgsOffset(uint batchIdx)
-{
-    return sizeof(DispatchArgs)/sizeof(uint) * batchIdx;
-}
-
 
 [numthreads(MS_GROUP_SIZE, 1, 1)]
 void ProcessMeshlets(uint3 id : SV_DispatchThreadID, uint3 groupThreadId : SV_GroupThreadID, uint3 groupId : SV_GroupID)
 {
-    uint dtid = id.x;
-    uint gtid = groupThreadId.x;
-    uint gid = groupId.x;
-    uint batchIdx = _BatchIndex.x;
-
-    uint argsOffset = GetDispatchArgsOffset(batchIdx);
+    // 每个线程组处理一个 meshlet
+    uint visibleMeshletIndex = groupId.x;
+    uint localThreadId = groupThreadId.x;
     
-    // 可见meshlet数存储在DispatchArgs第7位参数
-    uint visibleCount = _DispatchArgs[argsOffset + 7];
-    // 每个线程组处理一个meshlet，线程组数应在可见数范围内
-    if (gid >= visibleCount) return;
+    // 检查是否超出可见 meshlet 范围
+    uint visibleCount = _DispatchArgs[1];
+    if (visibleMeshletIndex >= visibleCount) return;
 
-    // meshlet indices存储在DispatchArgs第10位参数，gid组索引代表第x个meshlet
-    uint meshletIndex = _DispatchArgs[argsOffset + 10 + gid];
-    if (meshletIndex>=_MeshInfo.MeshletCount) return;
+    // 获取实际的 meshlet 索引和 meshlet 数据
+    uint globalMeshletIndex = _VisibleMeshletIndices[visibleMeshletIndex];
+    Meshlet m = _Meshlets[globalMeshletIndex];
 
-    Meshlet m = _Meshlets[meshletIndex];
-
-    if (gtid< m.VertCount)
+    if (localThreadId< m.VertCount) // 处理顶点 - 组内线程并行处理
     {
-        uint vertexIndex = GetVertexIndex(m, gtid);
+        uint vertexIndex = GetVertexIndex(m, localThreadId);
         
-        // 计算全局meshlet索引 (跨批次)
-        uint globalMeshletIndex = BATCH_MESHLET_SIZE * batchIdx + gid;
+        // 计算该顶点在输出缓冲区中的位置
+        uint outputIndex = MAX_VERTS_PER_MESHLET * globalMeshletIndex + localThreadId;
         
-        // 计算输出顶点索引
-        uint outputIndex = MAX_VERTS * globalMeshletIndex + gtid;
-        
-        // 处理顶点并写入输出缓冲区
-        _VertexBuffer[outputIndex] = GetVertexAttributes(meshletIndex, vertexIndex);
+        // 写入顶点数据
+        _VertexBuffer[outputIndex] = GetVertexAttributes(visibleMeshletIndex, vertexIndex);
     }
 
-    if (gtid< m.PrimCount)
+    if (localThreadId< m.PrimCount) // 处理三角形 - 组内线程并行处理
     {
         // 获取局部三角形索引
-        uint3 localTri = GetPrimitive(m, gtid);
+        uint3 localTri = GetPrimitive(m, localThreadId);
         
-        // 计算全局meshlet索引 (跨批次)
-        uint globalMeshletIndex = BATCH_MESHLET_SIZE * batchIdx + gid;
+        // 计算三角形在全局索引缓冲区中的位置
+        uint baseAddr = 3 * (MAX_PRIMS_PER_MESHLET * globalMeshletIndex + localThreadId);
+        uint baseVtx = MAX_VERTS_PER_MESHLET * globalMeshletIndex;
         
-        // 计算当前三角形在全局顶点索引缓冲区的起始地址
-        uint baseAddr = 3 * (MAX_PRIMS * globalMeshletIndex + gtid);
-        // 计算当前meshlet的顶点在全局顶点缓冲区的起始索引
-        uint baseVtx = MAX_VERTS * globalMeshletIndex;
-        
-        // 顶点起始索引+局部索引，写入全局三角形索引缓冲区
+        // 写入全局三角形索引缓冲区
         _IndexBuffer[baseAddr + 0] = baseVtx + localTri.x;
         _IndexBuffer[baseAddr + 1] = baseVtx + localTri.y;
         _IndexBuffer[baseAddr + 2] = baseVtx + localTri.z;

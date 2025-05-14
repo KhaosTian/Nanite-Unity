@@ -5,8 +5,8 @@
 
 // Constants
 // 常量定义
-#define MAX_PRIMS 126
-#define MAX_VERTS 64
+#define MAX_PRIMS_PER_MESHLET 126
+#define MAX_VERTS_PER_MESHLET 64
 #define MS_GROUP_SIZE 128
 #define AS_GROUP_SIZE 32
 #define BATCH_MESHLET_SIZE AS_GROUP_SIZE
@@ -70,31 +70,6 @@ struct VertexOut
     uint MeshletIndex : COLOR;
 };
 
-struct Payload
-{
-    uint MeshletIndices[AS_GROUP_SIZE];
-};
-
-struct DispatchArgs
-{
-    struct DrawIndexedArgs
-    {
-        uint BatchIdx;
-        uint IndexCountPerInstance;
-        uint InstanceCount;
-        uint StartIndexLocation;
-        int BaseVertexLocation;
-        uint StartInstanceLocation;
-    } DrawArgs;
-    struct ASDispatchMeshArgs
-    {
-        uint BatchIdx;
-        uint x;
-        uint y;
-        uint z;
-        uint MeshletIndices[AS_GROUP_SIZE];
-    } ASDispatchArgs;
-};
 
 // Shared buffers
 ConstantBuffer<Constants> _Constants;
