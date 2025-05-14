@@ -35,7 +35,6 @@ struct Instance
 
 struct MeshInfo
 {
-    uint IndexSize;
     uint MeshletCount;
     uint LastMeshletVertCount;
     uint LastMeshletPrimCount;

@@ -24,24 +24,7 @@ uint3 UnpackPrimitive(uint primitive)
 uint GetVertexIndex(Meshlet m, uint localIndex)
 {
     localIndex = m.VertOffset + localIndex;
-    
-    if (_MeshInfo.IndexSize == 4)
-    {
-        // 32位索引
-        return _UniqueVertexIndices.Load(localIndex * 4);
-    }
-
-        // 16位索引 - 需要按照正确的字节对齐读取
-        const uint wordOffset = (localIndex & 0x1);
-        const uint byteOffset = (localIndex / 2) * 4;
-        
-        // 读取两个16位索引的组合值
-        const uint indexPair = _UniqueVertexIndices.Load(byteOffset);
-
-    // 提取正确的16位值
-    const uint index = (indexPair >> (wordOffset * 16)) & 0xffff;
-
-    return index;
+    return _UniqueVertexIndices.Load(localIndex * 4);
 }
 
 // 从meshlet获取三角形
