@@ -1,6 +1,6 @@
 ﻿using System;
+using System.Numerics;
 using System.Runtime.InteropServices;
-using UnityEngine.Serialization;
 
 namespace Nanite
 {
@@ -21,5 +21,12 @@ namespace Nanite
         public uint[] triangles;
         public uint[] vertices;
         public Meshlet[] meshlets;
+    }
+
+    public struct Vertex
+    {
+        public Vector3 Position;
+        
+        public static int SIZE = sizeof(float) * 3;
     }
 }

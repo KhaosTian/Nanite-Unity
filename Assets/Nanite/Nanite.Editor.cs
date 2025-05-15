@@ -17,7 +17,7 @@ namespace Nanite
     {
         private Mesh m_SelectedMesh;
         private string m_SavePath = "Assets/";
-        private string m_AssetName = "MeshletAsset";
+        private string m_AssetName;
         private bool m_ProcessingMesh = false;
         private string m_StatusMessage = "";
 
@@ -30,12 +30,13 @@ namespace Nanite
         private void OnGUI()
         {
             GUILayout.Label("Meshlet Generator", EditorStyles.boldLabel);
-            
+
             // Mesh selection
             EditorGUILayout.BeginHorizontal();
             m_SelectedMesh = (Mesh)EditorGUILayout.ObjectField("Source Mesh", m_SelectedMesh, typeof(Mesh), false);
+            if (m_SelectedMesh) m_AssetName = m_SelectedMesh.name;
             EditorGUILayout.EndHorizontal();
-            
+
             // Save location
             EditorGUILayout.BeginHorizontal();
             m_SavePath = EditorGUILayout.TextField("Save Path", m_SavePath);
@@ -55,7 +56,7 @@ namespace Nanite
             }
 
             EditorGUILayout.EndHorizontal();
-            
+
             // Asset name
             m_AssetName = EditorGUILayout.TextField("Asset Name", m_AssetName);
             // Status message

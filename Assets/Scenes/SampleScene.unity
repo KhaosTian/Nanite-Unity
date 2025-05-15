@@ -251,7 +251,7 @@ Camera:
   m_GameObject: {fileID: 963194225}
   m_Enabled: 1
   serializedVersion: 2
-  m_ClearFlags: 2
+  m_ClearFlags: 1
   m_BackGroundColor: {r: 0.19215687, g: 0.3019608, b: 0.4745098, a: 0}
   m_projectionMatrixMode: 1
   m_GateFitMode: 2
@@ -337,8 +337,9 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: ad8594072b7e4e198a258acf170e06f4, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  CullingCompute: {fileID: 7200000, guid: 8a568f0a928742ebbabfb92d75c881d9, type: 3}
-  SelectedMeshletAsset: {fileID: 11400000, guid: f7c03bfa9a6ff994eb6729f5523d7195, type: 2}
+  CullingCompute: {fileID: 7200000, guid: e317a1d6611fe0d45af113487101c71b, type: 3}
+  ProcessingCompute: {fileID: 7200000, guid: 7009b549005c46ef835cab91d558cb8a, type: 3}
+  SelectedMeshletAsset: {fileID: 11400000, guid: 13fe1fbebeb59194b80a1ac9c8a46e95, type: 2}
 --- !u!4 &1183649694
 Transform:
   m_ObjectHideFlags: 0

@@ -7,6 +7,8 @@ Shader "Nanite/MeshletRendering"
 
     SubShader
     {
+        Tags {"RenderType"="Opaque" "Queue"="Geometry" }
+        LOD 200
         Pass
         {
             Cull Off
@@ -14,9 +16,22 @@ Shader "Nanite/MeshletRendering"
             #pragma vertex vert
             #pragma fragment frag
 
-            #define MESHLET_VERTEX_COUNT 64
+            #define MAX_PRIMS 126
 
             #include "UnityCG.cginc"
+            
+            struct Meshlet
+            {
+                uint VertOffset;
+                uint PrimOffset;
+                uint VertCount;
+                uint PrimCount;
+            };
+
+            struct Vertex
+            {
+                float3 Position;
+            };
 
             struct appdata
             {
@@ -30,65 +45,30 @@ Shader "Nanite/MeshletRendering"
                 float3 color : COLOR;
             };
 
-            struct EntityPara
-            {
-                float4x4 modelMatrix;
-                uint vertexOffset;
-                uint meshletIndex; // 实体在meshlet缓冲区中的起始索引
-                float3 color;
-            };
-
-            struct MeshletDescription
-            {
-                uint vertexOffset;
-                uint triangleOffset;
-                uint vertexCount;
-                uint triangleCount;
-            };
-
-            StructuredBuffer<float3> _PositionBuffer;
-            StructuredBuffer<MeshletDescription> _MeshletsBuffer;
-            StructuredBuffer<uint> _MeshletVerticesBuffer;
-            StructuredBuffer<uint> _MeshletTrianglesBuffer;
-
-            StructuredBuffer<uint> _VisibilityBuffer;
-
-            StructuredBuffer<EntityPara> _EntityBuffer;
-            StructuredBuffer<uint> _MeshletRefBuffer;
-
+            StructuredBuffer<Vertex> _VerticesBuffer;
+            StructuredBuffer<uint> _IndicesBuffer;
+            
             float4 _BackFaceColor;
 
             v2f vert(appdata v)
             {
-                uint visbibleID = _VisibilityBuffer[v.instanceID];
+                uint meshletIndex = v.instanceID;
+                uint triangleIndex = v.vertexID / 3;
+                uint vertexInTriangle = v.vertexID % 3;
 
-                uint entityID = _MeshletRefBuffer[visbibleID];
-                EntityPara entity = _EntityBuffer[entityID];
-
-                MeshletDescription meshlet = _MeshletsBuffer[visbibleID];
-
-                uint triangleIndex = v.vertexID / 3; // 在meshlet中第几个三角形
-                uint vertexInTriangle = v.vertexID % 3; // 在三角形中第几个顶点
-
-                uint triangleOffset = meshlet.triangleOffset
-                    + triangleIndex * 3 // 该三角形的偏移值
-                    + vertexInTriangle; // 该三角形顶点的偏移值
-
-                uint localVertexIndex = _MeshletTrianglesBuffer[triangleOffset]; // 局部三角形顶点索引
-                uint globalVertexIndex = _MeshletVerticesBuffer[meshlet.vertexOffset + localVertexIndex]; // 全局三角形顶点索引
-
-                float3 position = _PositionBuffer[globalVertexIndex];
+                uint currentIndex = 3 * (MAX_PRIMS * meshletIndex + triangleIndex) + vertexInTriangle;
+                uint vertexIndex = _IndicesBuffer[currentIndex];
+                float3 position = _VerticesBuffer[vertexIndex].Position;
 
                 v2f o;
-                unity_ObjectToWorld = entity.modelMatrix;
                 o.vertex = UnityObjectToClipPos(position);
-                o.color = entity.color;
+                o.color = fixed3(0.5, 0.5, 0.5);
                 return o;
             }
 
-            fixed4 frag(v2f i, bool facing : SV_IsFrontFace) : SV_Target
+            fixed4 frag(v2f i) : SV_Target
             {
-                fixed4 col = facing ? fixed4(i.color, 1) : _BackFaceColor;
+                fixed4 col = fixed4(i.color, 1);
                 return col;
             }
             ENDCG
